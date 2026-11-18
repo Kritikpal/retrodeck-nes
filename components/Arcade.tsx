@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import type { ChangeEvent, DragEvent, PointerEvent } from "react";
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp,
@@ -244,14 +245,14 @@ export function Arcade() {
           <div className="brand-symbol"><Gamepad2 size={23} strokeWidth={2.4} /></div>
           <span className="brand-text">RETRO<span>DECK</span><small> / NES</small></span>
         </div>
-        <nav className="topnav"><span className="nav-active">THE ARCADE</span><span className="nav-secondary">8-BIT COLLECTION</span></nav>
+        <nav className="topnav"><span className="nav-active">THE ARCADE</span><Link href="/multiplayer">ONLINE MULTIPLAYER</Link></nav>
         <button className="icon-top" title="Controls and help" aria-label="Help" onClick={() => setShowHelp(true)}><CircleHelp size={19} /></button>
       </header>
 
       <div className="content">
         <div className="intro"><div><div className="eyebrow"><span className="signal" /> YOUR PERSONAL RETRO ARCADE <span className="intro-line" /></div>
           <h1>Old school games.<br /><em>New school playground.</em></h1>
-          <p>Drop in a cartridge. Press start. Get lost in the pixels.</p></div>
+          <p>Drop in a cartridge. Press start. Get lost in the pixels. <Link href="/multiplayer" style={{color:"#bda6ff",textDecoration:"underline"}}>Play online with a friend</Link>.</p></div>
           <div className="intro-corner"><div className="tiny-label">SYSTEM ONLINE</div><div className="system-id">NES-001 <span>●</span></div><div className="tiny-note">256 × 240 · 60 FPS TARGET</div></div>
         </div>
 
