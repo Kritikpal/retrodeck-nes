@@ -61,7 +61,6 @@ export function MultiplayerArcade() {
   const bucketRef = useRef(0);
   const phaseRef = useRef<Phase>("offline");
   const pressRef = useRef(new Set<string>());
-  const pendingRef = useRef<"create" | "join">("create");
   const [phase, setPhase] = useState<Phase>("offline");
   const [rom, setRom] = useState<Rom | null>(null);
   const [room, setRoom] = useState("");
@@ -218,6 +217,7 @@ export function MultiplayerArcade() {
     try {
       cleanupEmulator();
       engineRef.current = new NetplayNes(canvas, lib, cartridge.data);
+      setError("");
       epochRef.current = epoch;
       changePhase("playing");
       setNotice("Both players connected. Match started at frame zero.");
@@ -234,7 +234,6 @@ export function MultiplayerArcade() {
       setError("Enter the six-character room code."); return;
     }
     setError(""); setNotice("");
-    pendingRef.current = action;
     changePhase("connecting");
     let socket: WebSocket;
     try { socket = new WebSocket(socketUrl()); }
@@ -355,7 +354,7 @@ export function MultiplayerArcade() {
               <span className="screen-serial">RD-NETPLAY / 60 HZ</span><span className="screen-logo">LOCKSTEP™</span>
             </div>
             <div className="net-game-meta"><div><small>CARTRIDGE</small><strong>{rom?.name || "Loading demo..."}</strong><span>{rom ? `${rom.origin === "demo" ? "Included two-player demo" : "Local ROM"} · SHA256 ${rom.hash.slice(0, 12)}…` : "Preparing game"}</span></div><div className="net-frame"><small>FRAME</small><strong>{frameCount}</strong></div></div>
-            <div className="net-commands"><button disabled={!connected || phase === "waiting"} onClick={() => send({ type: "pause", paused: active })}>{active ? <Pause size={16} /> : <Play size={16} />} {active ? "Pause both" : "Resume both"}</button><button disabled={!connected || phase === "waiting"} onClick={() => send({ type: "reset" })}><RotateCcw size={16} /> Reset both</button><button disabled={!active} onClick={() => engineRef.current?.unlockAudio()}><Headphones size={16} /> Enable sound</button></div>
+            <div className="net-commands"><button disabled={!connected || phase === "waiting" || phase === "desync"} onClick={() => send({ type: "pause", paused: active })}>{active ? <Pause size={16} /> : <Play size={16} />} {active ? "Pause both" : "Resume both"}</button><button disabled={!connected || phase === "waiting"} onClick={() => send({ type: "reset" })}><RotateCcw size={16} /> Reset both</button><button disabled={!active} onClick={() => engineRef.current?.unlockAudio()}><Headphones size={16} /> Enable sound</button></div>
             {active && waitingForFrame && <p className="net-wait"><WifiOff size={15} /> Waiting for synchronized inputs. Network latency can cause brief stalls.</p>}
           </section>
           <aside className="side-panel">
