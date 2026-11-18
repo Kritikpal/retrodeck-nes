@@ -1,6 +1,6 @@
 # RetroDeck NES — browser arcade with online 2-player rooms
 
-Next.js 16, React 19, TypeScript, JSNES 2, and a small persistent Node.js WebSocket relay. Play NES ROMs locally or invite a friend to a synchronized two-player session. No database, ROM upload, account, or external realtime service required for the MVP.
+Next.js 16, React 19, TypeScript, JSNES 2, and a small persistent Node.js WebSocket relay. Play the included Pixel Chase Duo game online with a friend using only a room code. No account, game selection, ROM upload, database, or external realtime service required for the multiplayer MVP. The separate solo arcade still supports local ROM loading.
 
 ## Run locally
 
@@ -18,16 +18,16 @@ Open http://localhost:3000 for solo play, or http://localhost:3000/multiplayer f
 - Next.js HTTP server on **port 3000**.
 - Persistent WebSocket relay on **port 3001**.
 
-## Play a two-player game
+## Play a two-player game (no ROM upload)
 
-1. Open **/multiplayer** in two browser windows or on two devices.
-2. Both players load the **same** `.nes` ROM (the bundled **Pixel Chase Duo** is automatically selected).
-3. Player 1 selects **Create room** and shares the room code or invitation URL.
-4. Player 2 enters the code and selects **Join room**. The game starts for both players automatically.
+1. Open **/multiplayer** in two browser windows or on two devices. The bundled **Pixel Chase Duo** game loads automatically on both devices.
+2. Player 1 clicks **Create room**. Share the six-character room code using **Copy room code**.
+3. Player 2 enters the code and clicks **Join room**.
+4. The game starts for both players automatically once the room has two players.
 5. Use arrows, X/Z, Enter, Right Shift, on-screen touch buttons, or a standard gamepad. Each browser controls **only its assigned player**.
-6. Pause and reset are synchronized. If one browser tab is hidden, the room pauses to prevent desynchronization.
+6. Pause and reset are synchronized. Hiding a browser tab pauses the room.
 
-**Two-controller ROM required:** Games that do not implement NES controller 2 cannot provide two-player gameplay. The original `pixel-chase.nes` is solo. The bundled `pixel-chase-duo.nes` is an original two-player collectible race: each player steers their own character to collect stars for points.
+**Only Pixel Chase Duo is available in multiplayer.** There is no multiplayer ROM picker, file input, or server-side game upload. The separate solo arcade remains unchanged.
 
 ## Architecture
 
@@ -37,7 +37,7 @@ Player 1: Next.js + JSNES       Player 2: Next.js + JSNES
        +---------------+-----------------+
                        v
         Node.js room relay (WebSockets)
-        - room codes / pairing / same-ROM SHA256 check
+        - room codes / pairing (one bundled demo game)
         - buffers input per emulated frame
         - broadcasts a frame only after BOTH inputs arrive
                        |
@@ -49,7 +49,7 @@ and advances its own CPU/PPU/APU once; frames drawn on local canvas.
 
 **Deterministic lockstep:** Input for eight upcoming frames is queued ahead (~133 ms at 60Hz) to absorb network latency. A local game can advance only after both controller masks have arrived for the next numbered frame. This trades input latency and occasional stalls for synchronized results. Every 300 frames, clients exchange **checksums** of emulator state via the relay; mismatches pause the session and require a synchronized reset. This is an MVP, not latency-compensated rollback netcode. It is best for stable, reasonably low-latency connections; high latency or jitter can stall play.
 
-No actual ROM bytes, rendered frames, or audio are sent across the network: only the ROM SHA-256 hash, controller input masks, frame numbers and state checksums.
+No ROM bytes, rendered frames, or audio are sent across WebSockets: only room messages, controller input masks, frame numbers, and state checksums. Both browsers load the same bundled demo from their web server.
 
 ## Deploy on a VPS / persistent Node host
 
@@ -73,14 +73,14 @@ WS_PORT=3001
 WS_HOST=0.0.0.0
 ```
 
-The frontend build embeds `NEXT_PUBLIC_WS_URL`, so set it **before `npm run build`**. The relay's default allowed origins are `http://localhost:3000,http://127.0.0.1:3000`. For LAN testing, add your LAN origin (e.g. `http://192.168.1.50:3000`) to `ROOM_ALLOWED_ORIGINS` and access the app via that address. Browser ROM hashing requires a secure context (HTTPS or localhost), so HTTPS is recommended for testing on physical phones.
+The frontend build embeds `NEXT_PUBLIC_WS_URL`, so set it **before `npm run build`**. The relay's default allowed origins are `http://localhost:3000,http://127.0.0.1:3000`. For LAN testing, add your LAN origin (e.g. `http://192.168.1.50:3000`) to `ROOM_ALLOWED_ORIGINS` and access the app via that address. HTTPS is recommended for real deployments; users on another device need network access to both the web app and the WebSocket relay.
 
 The room relay is in-memory, scoped to **one** Node.js process: room state does not survive server restarts or load balancing. Use sticky sessions or a shared coordination layer if scaling across multiple instances.
 
 ## Files
 
 - `components/Arcade.tsx` — existing solo emulator UI, unchanged functionality.
-- `components/MultiplayerArcade.tsx` — online room/ROM/controller UI.
+- `components/MultiplayerArcade.tsx` — auto-loaded Pixel Chase Duo, room code, and controller UI (no upload picker).
 - `lib/nes-netplay.ts` — low-level JSNES with local canvas/audio rendering and explicit `frame()` stepping.
 - `server/rooms.mjs` — room logic, ordered lockstep input queues, checksums, resets, lifecycle.
 - `server/index.mjs` — WebSocket relay with origin validation, heartbeat, input validation and rate-limiting.
@@ -99,12 +99,12 @@ npm run build       # Next.js production build
 
 ## MVP limitations / security
 
-- Game ROMs must be obtained and used legally. No proprietary ROMs are included.
+- Only the original, freely redistributable Pixel Chase Duo is available in multiplayer. No proprietary ROMs are included.
 - Only two simultaneous players per room. A disconnected guest can rejoin; the match then restarts from frame zero. If the host leaves, the room closes. Rooms expire after 30 minutes without activity.
 - Room codes provide invitation-based access, **not strong authentication**. No accounts, lobby chat, spectators, matchmaking, save-state resume, anti-cheat protection or guaranteed fair play.
 - The browser must remain responsive; hiding a tab pauses both peers.
-- Both peers must run a compatible emulator version and identical ROM. Not all NES mappers are supported by JSNES.
+- Both peers should load the web app from the same deployment so they run the same Pixel Chase Duo ROM and JSNES version.
 - Server checksums detect divergence, but automatic snapshot repair, latency prediction and rollback are not implemented.
-- No networked ROM file sharing: users load ROMs locally on both sides.
+- No networked ROM file sharing: both browsers fetch the bundled Pixel Chase Duo ROM automatically.
 
 This repository ships original, freely redistributable homebrew ROMs and contains no commercial Nintendo games.

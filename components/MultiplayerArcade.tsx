@@ -1,21 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChangeEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Clipboard, Gamepad2,
-  Headphones, Link2, Pause, Play, RotateCcw, Upload, Users, Wifi, WifiOff, X,
+  Headphones, Link2, Pause, Play, RotateCcw, Users, Wifi, WifiOff, X,
 } from "lucide-react";
 import { BUTTON_BITS, NetplayNes, sampleGamepad } from "@/lib/nes-netplay";
 
 type Phase = "offline" | "connecting" | "waiting" | "playing" | "paused" | "desync";
-type Rom = { name: string; data: Uint8Array; hash: string; origin: "demo" | "local" };
+type Rom = { name: string; data: Uint8Array };
 type Frame = { frame: number; epoch: number; p1: number; p2: number };
 type Incoming = Record<string, unknown> & { type: string };
 type Lib = ConstructorParameters<typeof NetplayNes>[1];
 
-const ROM_LIMIT = 10 * 1024 * 1024;
 const INPUT_AHEAD = 8; // 133 ms of input buffering at 60 Hz; masks absorb jitter but add latency.
 const FRAME_MS = 1000 / 60;
 const KEYS: Record<string, number> = {
@@ -31,16 +30,6 @@ const PAD = [
   { key: "RIGHT", bit: BUTTON_BITS.RIGHT, Icon: ArrowRight },
 ] as const;
 
-function isROM(data: Uint8Array) {
-  return data.length >= 16 && data[0] === 0x4e && data[1] === 0x45 && data[2] === 0x53 && data[3] === 0x1a;
-}
-async function hashROM(bytes: Uint8Array) {
-  if (!crypto.subtle) throw new Error("ROM verification requires HTTPS or localhost.");
-  const copied = new Uint8Array(bytes.byteLength);
-  copied.set(bytes);
-  const digest = await crypto.subtle.digest("SHA-256", copied.buffer);
-  return Array.from(new Uint8Array(digest), (v) => v.toString(16).padStart(2, "0")).join("");
-}
 function socketUrl() {
   if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
@@ -68,7 +57,6 @@ export function MultiplayerArcade() {
   const [player, setPlayer] = useState<1 | 2 | null>(null);
   const [frameCount, setFrameCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [romBusy, setRomBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [waitingForFrame, setWaitingForFrame] = useState(false);
@@ -113,7 +101,7 @@ export function MultiplayerArcade() {
         if (!response.ok) throw new Error("Cannot load the two-player demo ROM.");
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!mounted) return;
-        const selection: Rom = { name: "Pixel Chase Duo", data: bytes, hash: await hashROM(bytes), origin: "demo" };
+        const selection: Rom = { name: "Pixel Chase Duo", data: bytes };
         if (!mounted) return;
         selectedRef.current = selection;
         setRom(selection);
@@ -240,17 +228,16 @@ export function MultiplayerArcade() {
     catch { setError("Invalid WebSocket server URL."); changePhase("offline"); return; }
     wsRef.current = socket;
     socket.onopen = () => {
-      const cartridge = selectedRef.current;
-      if (!cartridge) return;
+      if (!selectedRef.current) return;
       send(action === "create"
-        ? { type: "create", romSha: cartridge.hash, romName: cartridge.name }
-        : { type: "join", code: joinCode.trim().toUpperCase(), romSha: cartridge.hash });
+        ? { type: "create" }
+        : { type: "join", code: joinCode.trim().toUpperCase() });
     };
     socket.onmessage = (event: MessageEvent) => {
       let message: Incoming;
       try { message = JSON.parse(event.data) as Incoming; } catch { return; }
       if (message.type === "hello") {
-        if (message.protocol !== 1) { setError("Server protocol version mismatch."); dropConnection(); }
+        if (message.protocol !== 2) { setError("Server protocol version mismatch."); dropConnection(); }
       } else if (message.type === "room") {
         setRoom(String(message.code));
         setPlayer(message.player as 1 | 2);
@@ -287,34 +274,6 @@ export function MultiplayerArcade() {
     };
   }, [changePhase, cleanupEmulator, dropConnection, joinCode, queueInput, send, startEmulator]);
 
-  const loadFile = async (file?: File) => {
-    if (!file || phaseRef.current !== "offline") return;
-    setRomBusy(true); setError("");
-    try {
-      if (file.size > ROM_LIMIT || file.size < 16) throw new Error("Choose a valid NES ROM under 10 MB.");
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      if (!isROM(bytes)) throw new Error("This file does not have a valid NES header.");
-      const selection: Rom = { name: file.name.replace(/\.nes$/i, ""), data: bytes, hash: await hashROM(bytes), origin: "local" };
-      selectedRef.current = selection;
-      setRom(selection);
-      setNotice("ROM loaded locally. Your friend must choose the exact same file.");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "ROM load failed."); }
-    finally { setRomBusy(false); }
-  };
-
-  const loadDemo = async () => {
-    if (phaseRef.current !== "offline") return;
-    setRomBusy(true);
-    try {
-      const result = await fetch("/roms/pixel-chase-duo.nes");
-      if (!result.ok) throw new Error("Demo ROM unavailable.");
-      const data = new Uint8Array(await result.arrayBuffer());
-      const selection: Rom = { name: "Pixel Chase Duo", data, hash: await hashROM(data), origin: "demo" };
-      selectedRef.current = selection; setRom(selection); setError(""); setNotice("Two-player demo ready.");
-    } catch (cause) { setError(String(cause)); }
-    finally { setRomBusy(false); }
-  };
-
   const touchProps = (bit: number) => ({
     onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -328,8 +287,12 @@ export function MultiplayerArcade() {
     onLostPointerCapture: () => pressRef.current.delete(String(bit)),
   });
 
-  const invite = room && typeof window !== "undefined" ? `${window.location.origin}/multiplayer?room=${room}` : "";
-  const copyInvite = () => { if (invite) void navigator.clipboard.writeText(invite).then(() => setNotice("Invite link copied.")).catch(() => setError("Unable to copy. Copy the room code instead.")); };
+  const copyRoomCode = () => {
+    if (!room) return;
+    void navigator.clipboard.writeText(room)
+      .then(() => setNotice("Room code copied. Send it to Player 2."))
+      .catch(() => setError("Unable to copy automatically. Select the room code above to copy it."));
+  };
   const active = phase === "playing";
   const connected = phase !== "offline" && phase !== "connecting";
 
@@ -341,7 +304,7 @@ export function MultiplayerArcade() {
         <span className={`net-status ${active ? "online" : ""}`}><Wifi size={15} /> {active ? "MATCH LIVE" : "NETPLAY"}</span>
       </header>
       <div className="content">
-        <div className="intro"><div><div className="eyebrow"><span className="signal" /> 2-PLAYER ONLINE ARCADE</div><h1>Play together.<br /><em>From anywhere.</em></h1><p>Create a room, share the link, and play a two-player NES game in sync.</p></div></div>
+        <div className="intro"><div><div className="eyebrow"><span className="signal" /> 2-PLAYER ONLINE ARCADE</div><h1>Play together.<br /><em>From anywhere.</em></h1><p>Create a room, share the six-character code, and play Pixel Chase Duo together. No uploads required.</p></div></div>
         <div className="main-grid">
           <section className="console-panel">
             <div className="console-heading"><div className="heading-left"><span className="console-status-dot" /> ONLINE CONSOLE <span className="console-divider">/</span> <span className="heading-muted">{player ? `PLAYER 0${player}` : "NO ROOM"}</span></div><div className="power-status"><span className={`power-light ${active ? "on" : ""}`} /> {phase.toUpperCase()}</div></div>
@@ -353,7 +316,7 @@ export function MultiplayerArcade() {
               </div>
               <span className="screen-serial">RD-NETPLAY / 60 HZ</span><span className="screen-logo">LOCKSTEP™</span>
             </div>
-            <div className="net-game-meta"><div><small>CARTRIDGE</small><strong>{rom?.name || "Loading demo..."}</strong><span>{rom ? `${rom.origin === "demo" ? "Included two-player demo" : "Local ROM"} · SHA256 ${rom.hash.slice(0, 12)}…` : "Preparing game"}</span></div><div className="net-frame"><small>FRAME</small><strong>{frameCount}</strong></div></div>
+            <div className="net-game-meta"><div><small>CARTRIDGE</small><strong>{rom?.name || "Loading demo..."}</strong><span>{rom ? "Demo loads automatically for both players" : "Preparing game"}</span></div><div className="net-frame"><small>FRAME</small><strong>{frameCount}</strong></div></div>
             <div className="net-commands"><button disabled={!connected || phase === "waiting" || phase === "desync"} onClick={() => send({ type: "pause", paused: active })}>{active ? <Pause size={16} /> : <Play size={16} />} {active ? "Pause both" : "Resume both"}</button><button disabled={!connected || phase === "waiting"} onClick={() => send({ type: "reset" })}><RotateCcw size={16} /> Reset both</button><button disabled={!active} onClick={() => engineRef.current?.unlockAudio()}><Headphones size={16} /> Enable sound</button></div>
             {active && waitingForFrame && <p className="net-wait"><WifiOff size={15} /> Waiting for synchronized inputs. Network latency can cause brief stalls.</p>}
           </section>
@@ -361,18 +324,16 @@ export function MultiplayerArcade() {
             <section className="card net-room-card"><div className="section-heading"><Users size={19} /><span>GAME ROOM</span><span className="small-counter">2 PLAYERS</span></div>
               {connected ? <>
                 <div className="room-code"><small>INVITE CODE</small><strong>{room}</strong><span>You're Player {player}</span></div>
-                <button className="room-primary" onClick={copyInvite}><Clipboard size={16} /> Copy invite link</button>
+                <button className="room-primary" onClick={copyRoomCode}><Clipboard size={16} /> Copy room code</button>
                 <button className="room-secondary" onClick={dropConnection}><X size={16} /> Leave room</button>
-                <p className="room-help">{phase === "waiting" ? "Open this invitation on a friend's device. They must load the same ROM to join." : "Both players run identical ROMs. Only controller inputs are exchanged."}</p>
+                <p className="room-help">{phase === "waiting" ? "Send the code to a friend. They enter it here and the match starts automatically." : "You are both playing Pixel Chase Duo. Only controller inputs are exchanged."}</p>
               </> : <>
-                <div className="room-step"><strong>1. Select an NES cartridge</strong><span>Use the included two-player demo or your own game.</span></div>
-                <div className="room-rom-actions"><label className="room-secondary file-button"><Upload size={16} /> Upload .nes<input type="file" accept=".nes" disabled={loading || romBusy || phase !== "offline"} onChange={(e: ChangeEvent<HTMLInputElement>) => { void loadFile(e.target.files?.[0]); e.target.value = ""; }} /></label><button className="room-secondary" disabled={loading || romBusy || phase !== "offline"} onClick={() => void loadDemo()}>Use demo</button></div>
-                <div className="room-step"><strong>2. Create a room</strong><span>Share a six-character code with your friend.</span></div>
-                <button className="room-primary" disabled={loading || romBusy || !rom || phase !== "offline"} onClick={() => connect("create")}><Link2 size={16} /> Create room</button>
+                <div className="room-step"><strong>Pixel Chase Duo is ready to play</strong><span>The two-player demo loads automatically. No file upload or game selection.</span></div>
+                <button className="room-primary" disabled={loading || !rom || phase !== "offline"} onClick={() => connect("create")}><Link2 size={16} /> Create room</button>
                 <div className="or-separator"><span /> OR JOIN A FRIEND <span /></div>
                 <label className="room-label" htmlFor="room-code">Room code</label>
                 <input id="room-code" className="room-code-input" value={joinCode} maxLength={6} placeholder="ABC234" disabled={phase !== "offline"} onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, ""))} />
-                <button className="room-secondary join-button" disabled={loading || romBusy || !rom || phase !== "offline"} onClick={() => connect("join")}><Users size={16} /> Join room</button>
+                <button className="room-secondary join-button" disabled={loading || !rom || phase !== "offline"} onClick={() => connect("join")}><Users size={16} /> Join room</button>
               </>}
             </section>
             <section className="card net-controls"><div className="section-heading"><Gamepad2 size={19} /><span>YOUR CONTROLLER</span><span className="small-counter">{player ? `P${player}` : "—"}</span></div>
@@ -385,7 +346,7 @@ export function MultiplayerArcade() {
         </div>
         {error && <div className="alert error"><X size={16} /> {error}<button aria-label="Dismiss error" onClick={() => setError("")}><X size={14}/></button></div>}
         {notice && <div className="alert success"><Check size={16} /> {notice}<button aria-label="Dismiss notice" onClick={() => setNotice("")}><X size={14}/></button></div>}
-        <div className="net-disclaimer"><Wifi size={15} /><span>ROM files never leave your browser. Only ROM hashes, player inputs, and state checksums are sent to the room server. Two-player games only. Both devices need the same ROM and compatible JSNES versions.</span></div>
+        <div className="net-disclaimer"><Wifi size={15} /><span>Pixel Chase Duo loads automatically on both devices. Only controller inputs, room messages, and state checksums travel through the WebSocket server.</span></div>
         <footer className="footer"><span>RETRODECK / ONLINE</span><span>Frame-locked multiplayer · <Link href="/">Return to solo arcade</Link></span></footer>
       </div>
     </main>

@@ -1,17 +1,11 @@
 import { randomInt } from 'node:crypto';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_SIZE = 6;
 const MAX_AHEAD = 24;
 const MAX_ROOMS = 1000;
-const MAX_NAME = 64;
 const MAX_FRAME = 60 * 60 * 12; // 12 hours of uninterrupted play
-const ROM_SHA = /^[a-f0-9]{64}$/;
-
-function cleanName(name) {
-  return typeof name === 'string' ? name.trim().slice(0, MAX_NAME) : '';
-}
 
 export class RoomStore {
   constructor({ send, now = () => Date.now(), makeCode } = {}) {
@@ -41,7 +35,6 @@ export class RoomStore {
     if (message.type === 'create') {
       if (member) return this.fail(peer, 'ALREADY_IN_ROOM', 'Leave the current room first.');
       if (this.rooms.size >= MAX_ROOMS) return this.fail(peer, 'BUSY', 'Room capacity reached.');
-      if (!ROM_SHA.test(message.romSha) || !cleanName(message.romName)) return this.fail(peer, 'INVALID_ROM', 'Choose a valid ROM first.');
       let code;
       for (let tries = 0; tries < 10; tries++) {
         const candidate = this.makeCode();
@@ -49,13 +42,13 @@ export class RoomStore {
       }
       if (!code) return this.fail(peer, 'BUSY', 'Unable to allocate a room.');
       const room = {
-        code, host: peer, guest: null, romSha: message.romSha, romName: cleanName(message.romName),
+        code, host: peer, guest: null,
         epoch: 0, nextFrame: 0, pending: new Map(), checksums: new Map(), paused: false,
         createdAt: this.now(), touchedAt: this.now(),
       };
       this.rooms.set(code, room);
       this.peers.set(peer, { code, player: 1 });
-      this.emit(peer, { type: 'room', code, player: 1, romSha: room.romSha, romName: room.romName, players: 1, status: 'waiting' });
+      this.emit(peer, { type: 'room', code, player: 1, players: 1, status: 'waiting' });
       return;
     }
     if (message.type === 'join') {
@@ -63,11 +56,10 @@ export class RoomStore {
       const room = typeof message.code === 'string' ? this.rooms.get(message.code.trim().toUpperCase()) : undefined;
       if (!room) return this.fail(peer, 'ROOM_NOT_FOUND', 'Room not found. Ask the host for the code.');
       if (room.guest) return this.fail(peer, 'ROOM_FULL', 'This room already has two players.');
-      if (room.romSha !== message.romSha) return this.fail(peer, 'ROM_MISMATCH', 'Players must load the exact same .nes file (SHA-256 mismatch).');
       room.guest = peer;
       room.touchedAt = this.now();
       this.peers.set(peer, { code: room.code, player: 2 });
-      this.emit(peer, { type: 'room', code: room.code, player: 2, romSha: room.romSha, romName: room.romName, players: 2, status: 'ready' });
+      this.emit(peer, { type: 'room', code: room.code, player: 2, players: 2, status: 'ready' });
       this.emit(room.host, { type: 'peer_joined', players: 2 });
       this.start(room);
       return;

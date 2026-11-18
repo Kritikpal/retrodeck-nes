@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RoomStore } from '../server/rooms.mjs';
 
-const sha = 'a'.repeat(64);
 function setup() {
   const messages = new Map();
   const host = {}, guest = {}, third = {};
@@ -15,29 +14,40 @@ function setup() {
   return { store, host, guest, third, inbox, last };
 }
 function join(r) {
-  r.store.handle(r.host, { type: 'create', romSha: sha, romName: 'Demo' });
-  r.store.handle(r.guest, { type: 'join', code: 'abc234', romSha: sha });
+  r.store.handle(r.host, { type: 'create' });
+  r.store.handle(r.guest, { type: 'join', code: 'abc234' });
 }
 
 test('new room is waiting; second peer starts same epoch', () => {
   const r=setup();
-  r.store.handle(r.host, { type: 'create', romSha: sha, romName: 'Demo' });
+  r.store.handle(r.host, { type: 'create' });
   assert.equal(r.last(r.host).status, 'waiting');
-  r.store.handle(r.guest, { type:'join', code:'abc234', romSha:sha });
+  r.store.handle(r.guest, { type:'join', code:'abc234' });
   assert.deepEqual(r.last(r.host), { type: 'start', epoch: 1, frame: 0 });
   assert.deepEqual(r.last(r.guest), { type: 'start', epoch: 1, frame: 0 });
 });
 
-test('rejects mismatched ROM, missing room and third player', () => {
-  const r=setup();
-  r.store.handle(r.third, {type:'join',code:'MISSING',romSha:sha});
+test('no game upload or ROM selection is needed; rejects missing rooms and third player', () => {
+  const r = setup();
+  r.store.handle(r.third, {type:'join',code:'MISSING'});
   assert.equal(r.last(r.third).code,'ROOM_NOT_FOUND');
-  r.store.handle(r.host, {type:'create',romSha:sha,romName:'Demo'});
-  r.store.handle(r.guest, {type:'join',code:'ABC234',romSha:'b'.repeat(64)});
-  assert.equal(r.last(r.guest).code,'ROM_MISMATCH');
-  r.store.handle(r.guest, {type:'join',code:'ABC234',romSha:sha});
-  r.store.handle(r.third, {type:'join',code:'ABC234',romSha:sha});
+  r.store.handle(r.host, {type:'create'});
+  assert.equal(r.last(r.host).status,'waiting');
+  r.store.handle(r.guest, {type:'join',code:'ABC234'});
+  assert.equal(r.last(r.guest).type,'start');
+  r.store.handle(r.third, {type:'join',code:'ABC234'});
   assert.equal(r.last(r.third).code,'ROOM_FULL');
+});
+
+test('room ignores arbitrary ROM metadata from clients', () => {
+  const r = setup();
+  r.store.handle(r.host, {type:'create',romSha:'untrusted',romName:'other-ROM'});
+  const room = r.store.rooms.get('ABC234');
+  assert.ok(room);
+  assert.equal('romSha' in room, false);
+  assert.equal('romName' in room, false);
+  r.store.handle(r.guest, {type:'join',code:'ABC234',romSha:'different'});
+  assert.equal(r.last(r.guest).type,'start');
 });
 
 test('broadcasts only complete ordered input frames', () => {
@@ -94,7 +104,7 @@ test('guest disconnection lets host reuse same room; host departure closes it',(
   const r=setup();join(r);
   r.store.leave(r.guest);
   assert.equal(r.last(r.host).type,'peer_left');
-  r.store.handle(r.third,{type:'join',code:'ABC234',romSha:sha});
+  r.store.handle(r.third,{type:'join',code:'ABC234'});
   assert.equal(r.last(r.host).epoch,2);
   r.store.leave(r.host);
   assert.equal(r.last(r.third).type,'room_closed');
@@ -102,7 +112,7 @@ test('guest disconnection lets host reuse same room; host departure closes it',(
 });
 
 test('inactive rooms are pruned',()=>{
-  const r=setup();r.store.handle(r.host,{type:'create',romSha:sha,romName:'Demo'});
+  const r=setup();r.store.handle(r.host,{type:'create'});
   r.store.prune(-1);
   assert.equal(r.store.rooms.size,0);
   assert.equal(r.last(r.host).type,'room_closed');
